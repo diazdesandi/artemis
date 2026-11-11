@@ -4,21 +4,21 @@
 import Accelerate
 import Foundation
 import NaturalLanguage
+import Synchronization
 
 /// on-device word meaning for local search: interns a corpus's words with their
 /// embedding vectors, then scores every interned word against a typed one, 0…1
 nonisolated final class WordMeaning {
     /// one model for every search; NLEmbedding isn't documented as thread-safe
-    nonisolated(unsafe) private static let embedding = NLEmbedding.wordEmbedding(for: .english)
-    private static let lock = NSLock()
+    private static let embedding = Mutex(NLEmbedding.wordEmbedding(for: .english))
 
     private(set) var vocab: [String] = []
     private var index: [String: Int] = [:]
     /// unit vectors, row-major `vocab.count × dim`; zero rows for words the embedding lacks
     private var vectors: [Float] = []
-    private let dim = lock.withLock { embedding?.dimension ?? 0 }
+    private let dim = embedding.withLock { $0?.dimension ?? 0 }
 
-    static func knows(_ word: String) -> Bool { lock.withLock { embedding?.contains(word) == true } }
+    static func knows(_ word: String) -> Bool { embedding.withLock { $0?.contains(word) == true } }
 
     /// lowercased words of `text`, without one-letter words and `dropping`
     static func words(_ text: String, dropping: Set<String>) -> [String] {
@@ -35,7 +35,7 @@ nonisolated final class WordMeaning {
     }
 
     private static func unitVector(_ word: String) -> [Float]? {
-        guard let v = lock.withLock({ embedding?.vector(for: word) }) else { return nil }
+        guard let v = embedding.withLock({ $0?.vector(for: word) }) else { return nil }
         let f = v.map(Float.init)
         let norm = sqrt(f.reduce(0) { $0 + $1 * $1 })
         return norm > 0 ? f.map { $0 / norm } : nil

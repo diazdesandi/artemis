@@ -3,6 +3,7 @@
 
 import Foundation
 import FoundationModels
+import Synchronization
 
 /// opt-in jobs on Apple's on-device model. every job proposes and none acts on a
 /// page's behalf; when the model is unavailable or fails, the feature just doesn't
@@ -215,28 +216,23 @@ actor Intelligence {
 
     /// `availability` is too slow for view bodies and menu validation, which read
     /// `readiness`; cached for `readinessTTL` seconds
-    nonisolated(unsafe) private static var cachedReadiness: Readiness?
-    nonisolated(unsafe) private static var cachedAt = Date.distantPast
-    private static let readinessLock = NSLock()
+    nonisolated private static let cachedReadiness = Mutex<(readiness: Readiness?, at: Date)>((nil, .distantPast))
     private static let readinessTTL: TimeInterval = 10
 
     nonisolated static var readiness: Readiness {
-        readinessLock.lock()
-        defer { readinessLock.unlock() }
-        if let cachedReadiness, Date().timeIntervalSince(cachedAt) < readinessTTL {
-            return cachedReadiness
+        cachedReadiness.withLock { cache in
+            if let readiness = cache.readiness, Date().timeIntervalSince(cache.at) < readinessTTL {
+                return readiness
+            }
+            let fresh = measureReadiness()
+            cache = (fresh, Date())
+            return fresh
         }
-        let fresh = measureReadiness()
-        cachedReadiness = fresh
-        cachedAt = Date()
-        return fresh
     }
 
     /// drops the cached readiness and measures it again
     nonisolated static func refreshReadiness() {
-        readinessLock.lock()
-        cachedAt = .distantPast
-        readinessLock.unlock()
+        cachedReadiness.withLock { $0.at = .distantPast }
         _ = readiness
     }
 

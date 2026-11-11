@@ -4,6 +4,7 @@
 import AppKit
 import QuartzCore
 import SwiftUI
+import Synchronization
 import WebKit
 
 /// dev-only performance harness: `ARTEMIS_BENCH=1` drives the running app through a fixed
@@ -22,24 +23,20 @@ enum Bench {
     // MARK: - View body counters
 
     /// on only while the harness runs, so `tick` costs a bool load in normal use
-    nonisolated(unsafe) private static var isCounting = false
-    nonisolated(unsafe) private static var counts: [String: Int] = [:]
-    nonisolated(unsafe) private static let countLock = NSLock()
+    nonisolated private static let isCounting = Atomic(false)
+    nonisolated private static let counts = Mutex<[String: Int]>([:])
 
     /// call from a view's `body`: `Bench.tick("Sidebar")`
     nonisolated static func tick(_ name: String) {
-        guard isCounting else { return }
-        countLock.lock()
-        counts[name, default: 0] += 1
-        countLock.unlock()
+        guard isCounting.load(ordering: .relaxed) else { return }
+        counts.withLock { $0[name, default: 0] += 1 }
     }
 
     private static func drainCounts() -> [String: Int] {
-        countLock.lock()
-        let snapshot = counts
-        counts = [:]
-        countLock.unlock()
-        return snapshot
+        counts.withLock { counts in
+            defer { counts = [:] }
+            return counts
+        }
     }
 
     // MARK: - Process metrics
@@ -236,26 +233,21 @@ enum Bench {
     // MARK: - Launch marks
 
     /// launch milestones in seconds since exec, recorded on every launch
-    nonisolated(unsafe) private static var marks: [(String, Double)] = []
-    nonisolated(unsafe) private static let markLock = NSLock()
+    nonisolated private static let marks = Mutex<[(String, Double)]>([])
 
-    nonisolated(unsafe) private static var markedOnce: Set<String> = []
+    nonisolated private static let markedOnce = Mutex<Set<String>>([])
 
     /// for marks that sit inside something that runs repeatedly (a `body`), where
     /// only the first time is the launch milestone
     nonisolated static func markOnce(_ name: String) {
-        markLock.lock()
-        let isFirst = markedOnce.insert(name).inserted
-        markLock.unlock()
+        let isFirst = markedOnce.withLock { $0.insert(name).inserted }
         guard isFirst else { return }
         mark(name)
     }
 
     nonisolated static func mark(_ name: String) {
         let t = processStartInterval()
-        markLock.lock()
-        marks.append((name, t))
-        markLock.unlock()
+        marks.withLock { $0.append((name, t)) }
     }
 
     // MARK: - Launch
@@ -280,9 +272,7 @@ enum Bench {
             "milestones (ms since exec)",
             String(repeating: "-", count: 40),
         ]
-        markLock.lock()
-        let taken = marks.sorted { $0.1 < $1.1 }
-        markLock.unlock()
+        let taken = marks.withLock { $0 }.sorted { $0.1 < $1.1 }
         var last = 0.0
         for (name, at) in taken {
             lines.append(String(
@@ -401,7 +391,7 @@ enum Bench {
         } else {
             lines.append("WARNING: no window after 10s — frame counts are NOT measured")
         }
-        isCounting = true
+        isCounting.store(true, ordering: .relaxed)
 
         // extensions are off unless `ARTEMIS_BENCH_EXTENSIONS=1`; `isMasterEnabled`
         // is persisted, so every exit path restores it before terminating
@@ -569,7 +559,7 @@ enum Bench {
             }
             manager.isSidebarCollapsed = false
             manager.isLibraryOpen = false
-            isCounting = false
+            isCounting.store(false, ordering: .relaxed)
             counter.stop()
             manager.selectSpace(home)
             manager.deleteSpace(bench)
@@ -644,7 +634,7 @@ enum Bench {
             try? await Task.sleep(for: .seconds(10))
         }
 
-        isCounting = false
+        isCounting.store(false, ordering: .relaxed)
         counter.stop()
 
         manager.selectSpace(home)

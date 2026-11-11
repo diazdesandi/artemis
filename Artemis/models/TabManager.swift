@@ -2136,6 +2136,7 @@ final class TabManager {
             self?.archiveStaleTabs()
             self?.hibernateIdleTabs()
         }
+        archiveTimer?.tolerance = 60
         watchMemoryPressure()
     }
 

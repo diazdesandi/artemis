@@ -226,7 +226,7 @@ nonisolated enum Reports {
                 await sendCrashes(automatic: true)
                 await sendErrors()
             }
-            try? await Task.sleep(for: .seconds(3600))
+            try? await Task.sleep(for: .seconds(3600), tolerance: .seconds(300))
         }
     }
 

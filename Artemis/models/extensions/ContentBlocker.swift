@@ -222,7 +222,7 @@ final class ContentBlocker {
         await refreshIfStaleLocked(reloadTabs: !hadCache)
         refresher = refresher ?? Task {
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.refreshCheck)
+                try? await Task.sleep(for: Self.refreshCheck, tolerance: .seconds(300))
                 guard isEnabled else { continue }
                 await serialized { await self.refreshIfStaleLocked(reloadTabs: false) }
             }
